@@ -49,6 +49,29 @@ ensure_login() {
   fi
 }
 
+sanitize_codex_auth() {
+  # If ~/.codex/auth.json contains a stale/revoked ChatGPT OAuth session without an API key,
+  # Codex TUI will force the "Sign in with ChatGPT" screen on startup.
+  local auth_file="${HOME}/.codex/auth.json"
+  if [[ -f "${auth_file}" ]]; then
+    python3 -c '
+import json, os, shutil, sys
+p, api_key = sys.argv[1], sys.argv[2]
+try:
+    data = json.load(open(p))
+except Exception:
+    sys.exit(0)
+if data.get("auth_mode") == "chatgpt" or not data.get("OPENAI_API_KEY"):
+    bak = p + ".chatgpt.bak"
+    if not os.path.exists(bak):
+        shutil.copy2(p, bak)
+    with open(p, "w") as f:
+        json.dump({"OPENAI_API_KEY": api_key}, f)
+    os.chmod(p, 0o600)
+' "${auth_file}" "${CPA_API_KEY}" || true
+  fi
+}
+
 start_proxy() {
   ensure_login
   if is_proxy_running; then
@@ -94,7 +117,9 @@ try:
     if not data:
         print("  (暂无可用模型，请确认已执行 agy-codex login)")
     for m in data:
-        print(f"  - {m.get(\"id\")}")
+        mid = m.get("id", "")
+        owner = m.get("owned_by", "")
+        print(f"  - {mid}" + (f" ({owner})" if owner else ""))
 except Exception as e:
     print(f"  解析模型列表失败: {e}")
 '
@@ -211,8 +236,9 @@ case "${1:-}" in
     ;;
 esac
 
-# 默认行为：确保后台转发已启动，然后拉起 codex
+# 默认行为：确保后台转发已启动，清理失效的 ChatGPT OAuth 残留，然后拉起 codex
 start_proxy
+sanitize_codex_auth
 
 # 检查用户参数中是否已显式指定 -m / --model
 HAS_MODEL_ARG=0
@@ -224,12 +250,13 @@ for arg in "$@"; do
 done
 
 CODEX_OVERRIDES=(
+  --disable remote_plugin
   -c 'model_provider="agy"'
   -c 'model_providers.agy.name="Antigravity"'
   -c "model_providers.agy.base_url=\"${CPA_BASE_URL}\""
   -c 'model_providers.agy.wire_api="responses"'
   -c "model_providers.agy.experimental_bearer_token=\"${CPA_API_KEY}\""
-  -c 'model_providers.agy.requires_openai_auth=true'
+  -c 'model_providers.agy.requires_openai_auth=false'
 )
 
 if [[ "${HAS_MODEL_ARG}" -eq 0 ]]; then

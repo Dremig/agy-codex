@@ -68,16 +68,16 @@ def main() -> int:
             'name = "antigravity"\n'
             f'base_url = "{args.base_url}"\n'
             'wire_api = "responses"\n'
-            "requires_openai_auth = true\n"
+            f'experimental_bearer_token = "{args.api_key}"\n'
+            "requires_openai_auth = false\n"
         ),
         "modelCatalog": {
             "models": [
                 {"model": "gemini-4-argon-high", "displayName": "Gemini 4 Argon (High)", "contextWindow": 1000000},
-                {"model": "gemini-4-argon-medium", "displayName": "Gemini 4 Argon (Medium)", "contextWindow": 1000000},
-                {"model": "gemini-4-argon-low", "displayName": "Gemini 4 Argon (Low)", "contextWindow": 1000000},
                 {"model": "gemini-3.8-flash-high", "displayName": "Gemini 3.8 Flash (High)", "contextWindow": 1000000},
-                {"model": "gemini-3.8-flash-medium", "displayName": "Gemini 3.8 Flash (Medium)", "contextWindow": 1000000},
-                {"model": "gemini-3.8-flash-low", "displayName": "Gemini 3.8 Flash (Low)", "contextWindow": 1000000},
+                {"model": "gemini-3-flash", "displayName": "Gemini 3 Flash", "contextWindow": 1000000},
+                {"model": "gemini-3.5-flash-lite", "displayName": "Gemini 3.5 Flash Lite", "contextWindow": 1000000},
+                {"model": "gemini-3.1-flash-lite", "displayName": "Gemini 3.1 Flash Lite", "contextWindow": 1000000},
                 {"model": "claude-sonnet-4-6", "displayName": "Claude Sonnet 4.6 (Thinking)", "contextWindow": 200000},
                 {"model": "claude-opus-4-6-thinking", "displayName": "Claude Opus 4.6 (Thinking)", "contextWindow": 200000},
                 {"model": "gpt-oss-120b-medium", "displayName": "GPT-OSS 120B (Medium)", "contextWindow": 128000},
