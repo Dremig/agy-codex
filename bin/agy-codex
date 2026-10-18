@@ -1,0 +1,243 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CPA_DIR="${AGY_CPA_DIR:-${HOME}/.cli-proxy-api}"
+CPA_BIN="${CPA_DIR}/cli-proxy-api"
+CPA_CFG="${CPA_DIR}/config.yaml"
+CPA_LOG="${CPA_DIR}/proxy.log"
+CPA_PID_FILE="${CPA_DIR}/proxy.pid"
+CPA_HOST="${AGY_PROXY_HOST:-127.0.0.1}"
+CPA_PORT="${AGY_PROXY_PORT:-8317}"
+CPA_API_KEY="${AGY_PROXY_API_KEY:-sk-agy-local}"
+CPA_BASE_URL="http://${CPA_HOST}:${CPA_PORT}/v1"
+DEFAULT_MODEL="${AGY_MODEL:-gemini-4-argon-high}"
+
+# Resolve repository root if invoked via symlink
+SOURCE="${BASH_SOURCE[0]}"
+while [[ -L "${SOURCE}" ]]; do
+  DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
+  SOURCE="$(readlink "${SOURCE}")"
+  [[ "${SOURCE}" != /* ]] && SOURCE="${DIR}/${SOURCE}"
+done
+REPO_ROOT="$(cd -P "$(dirname "${SOURCE}")/.." && pwd)"
+
+is_proxy_running() {
+  curl -fsS -m 1 "${CPA_BASE_URL}/models" -H "Authorization: Bearer ${CPA_API_KEY}" >/dev/null 2>&1
+}
+
+has_antigravity_auth() {
+  compgen -G "${CPA_DIR}/antigravity-*.json" >/dev/null 2>&1 || compgen -G "${CPA_DIR}/*antigravity*.json" >/dev/null 2>&1
+}
+
+ensure_binary() {
+  if [[ ! -x "${CPA_BIN}" ]]; then
+    if [[ -x "${REPO_ROOT}/install.sh" ]]; then
+      echo "📦 未检测到 cli-proxy-api 二进制，正在通过 install.sh 自动安装..."
+      "${REPO_ROOT}/install.sh"
+    else
+      echo "❌ 未找到 ${CPA_BIN}，请先运行 ./install.sh" >&2
+      exit 1
+    fi
+  fi
+}
+
+ensure_login() {
+  ensure_binary
+  if ! has_antigravity_auth; then
+    echo "🔑 未检测到 Antigravity 授权凭证，正在启动首次 OAuth 登录..."
+    "${CPA_BIN}" -config "${CPA_CFG}" -antigravity-login
+  fi
+}
+
+start_proxy() {
+  ensure_login
+  if is_proxy_running; then
+    return 0
+  fi
+
+  echo "🚀 正在后台启动 Antigravity 转发服务 (${CPA_BASE_URL})..."
+  nohup "${CPA_BIN}" -config "${CPA_CFG}" >>"${CPA_LOG}" 2>&1 &
+  local pid=$!
+  echo "${pid}" >"${CPA_PID_FILE}"
+
+  for _ in {1..25}; do
+    if is_proxy_running; then
+      echo "✅ 转发服务已就绪 (PID: ${pid}, Endpoint: ${CPA_BASE_URL})"
+      return 0
+    fi
+    sleep 0.2
+  done
+
+  echo "❌ 转发服务启动超时，请使用 'agy-codex logs' 查看日志 (${CPA_LOG})" >&2
+  return 1
+}
+
+stop_proxy() {
+  if [[ -f "${CPA_PID_FILE}" ]]; then
+    local pid
+    pid=$(cat "${CPA_PID_FILE}" 2>/dev/null || true)
+    if [[ -n "${pid}" ]] && kill -0 "${pid}" 2>/dev/null; then
+      kill "${pid}" 2>/dev/null || true
+    fi
+    rm -f "${CPA_PID_FILE}"
+  fi
+  pkill -f "${CPA_BIN} -config ${CPA_CFG}" 2>/dev/null || true
+  echo "🛑 Antigravity 转发服务已停止。"
+}
+
+list_models() {
+  curl -fsS "${CPA_BASE_URL}/models" -H "Authorization: Bearer ${CPA_API_KEY}" \
+    | python3 -c '
+import json, sys
+try:
+    data = json.load(sys.stdin).get("data", [])
+    if not data:
+        print("  (暂无可用模型，请确认已执行 agy-codex login)")
+    for m in data:
+        print(f"  - {m.get(\"id\")}")
+except Exception as e:
+    print(f"  解析模型列表失败: {e}")
+'
+}
+
+pick_model() {
+  local preferred="$1"
+  local resolved
+  resolved=$(curl -fsS "${CPA_BASE_URL}/models" -H "Authorization: Bearer ${CPA_API_KEY}" 2>/dev/null \
+    | python3 -c '
+import json, sys
+preferred = sys.argv[1]
+try:
+    ids = [m.get("id") for m in json.load(sys.stdin).get("data", []) if m.get("id")]
+    if preferred in ids:
+        print(preferred)
+    else:
+        for cand in ["gemini-4-argon-high", "gemini-4-argon", "claude-sonnet-4-6", "claude-opus-4-6-thinking", "gemini-3.8-flash-high"]:
+            if cand in ids:
+                print(cand)
+                break
+        else:
+            print(ids[0] if ids else preferred)
+except Exception:
+    print(preferred)
+' "${preferred}")
+  echo "${resolved:-${preferred}}"
+}
+
+show_status() {
+  echo "=== agy-codex 状态 ==="
+  if has_antigravity_auth; then
+    echo "🔐 OAuth 凭证: 已配置 ($(ls -1 "${CPA_DIR}"/*antigravity*.json 2>/dev/null | xargs -n1 basename | paste -sd ', ' -))"
+  else
+    echo "🔐 OAuth 凭证: 未配置 (请运行 'agy-codex login')"
+  fi
+
+  if is_proxy_running; then
+    echo "🟢 转发服务: 运行中 (${CPA_BASE_URL})"
+    echo "📦 可用模型:"
+    list_models
+  else
+    echo "⚪ 转发服务: 未运行 (可运行 'agy-codex start' 或直接运行 'agy-codex')"
+  fi
+}
+
+show_help() {
+  cat <<EOF
+用法:
+  agy-codex [codex 参数...]   自动确保转发启动，并直连 Antigravity 启动 Codex CLI
+  agy-codex start | proxy     仅在后台启动 Antigravity 转发服务 (${CPA_BASE_URL})，供 cc-switch / Codex Desktop 使用
+  agy-codex stop              停止后台转发服务
+  agy-codex restart           重启后台转发服务
+  agy-codex status            查看转发状态、授权账号与可用模型列表
+  agy-codex login             登录或添加 Antigravity OAuth 账号
+  agy-codex models            列出当前转发暴露的模型 ID
+  agy-codex cc-switch         将 Antigravity (AGY) 供应商注入/同步至 CC Switch
+  agy-codex logs              查看转发服务日志 (${CPA_LOG})
+
+环境变量:
+  AGY_MODEL=<model_id>        指定默认模型 (默认: ${DEFAULT_MODEL}，也可直接传 codex -m <model_id>)
+  AGY_PROXY_PORT=<port>       指定本地转发端口 (默认: ${CPA_PORT})
+  AGY_PROXY_API_KEY=<key>     指定本地转发认证 Key (默认: ${CPA_API_KEY})
+EOF
+}
+
+case "${1:-}" in
+  start|proxy)
+    start_proxy
+    show_status
+    exit 0
+    ;;
+  stop)
+    stop_proxy
+    exit 0
+    ;;
+  restart)
+    stop_proxy
+    start_proxy
+    show_status
+    exit 0
+    ;;
+  status)
+    show_status
+    exit 0
+    ;;
+  login)
+    ensure_binary
+    "${CPA_BIN}" -config "${CPA_CFG}" -antigravity-login
+    exit 0
+    ;;
+  models)
+    start_proxy
+    echo "📦 当前可用模型 (${CPA_BASE_URL}/models):"
+    list_models
+    exit 0
+    ;;
+  cc-switch)
+    shift
+    python3 "${REPO_ROOT}/scripts/register-cc-switch.py" \
+      --base-url "${CPA_BASE_URL}" \
+      --api-key "${CPA_API_KEY}" \
+      --default-model "${DEFAULT_MODEL}" \
+      "$@"
+    exit 0
+    ;;
+  logs)
+    tail -n 100 -f "${CPA_LOG}"
+    exit 0
+    ;;
+  -h|--help|help)
+    show_help
+    exit 0
+    ;;
+esac
+
+# 默认行为：确保后台转发已启动，然后拉起 codex
+start_proxy
+
+# 检查用户参数中是否已显式指定 -m / --model
+HAS_MODEL_ARG=0
+for arg in "$@"; do
+  if [[ "${arg}" == "-m" || "${arg}" == "--model" || "${arg}" == --model=* ]]; then
+    HAS_MODEL_ARG=1
+    break
+  fi
+done
+
+CODEX_OVERRIDES=(
+  -c 'model_provider="agy"'
+  -c 'model_providers.agy.name="Antigravity"'
+  -c "model_providers.agy.base_url=\"${CPA_BASE_URL}\""
+  -c 'model_providers.agy.wire_api="responses"'
+  -c "model_providers.agy.experimental_bearer_token=\"${CPA_API_KEY}\""
+  -c 'model_providers.agy.requires_openai_auth=true'
+)
+
+if [[ "${HAS_MODEL_ARG}" -eq 0 ]]; then
+  SELECTED_MODEL=$(pick_model "${DEFAULT_MODEL}")
+  CODEX_OVERRIDES+=(-c "model=\"${SELECTED_MODEL}\"")
+  echo "🎯 启动 Codex (Provider: Antigravity, Model: ${SELECTED_MODEL})"
+else
+  echo "🎯 启动 Codex (Provider: Antigravity)"
+fi
+
+exec codex "${CODEX_OVERRIDES[@]}" "$@"

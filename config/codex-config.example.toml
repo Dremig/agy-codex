@@ -1,0 +1,11 @@
+# ~/.codex/config.toml example when routing Codex directly to agy-codex local proxy
+model_provider = "agy"
+model = "gemini-4-argon-high"
+disable_response_storage = true
+
+[model_providers.agy]
+name = "Antigravity"
+base_url = "http://127.0.0.1:8317/v1"
+wire_api = "responses"
+experimental_bearer_token = "sk-agy-local"
+requires_openai_auth = true

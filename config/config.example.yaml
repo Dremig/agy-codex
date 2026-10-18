@@ -1,0 +1,21 @@
+config-version: 8
+
+server:
+  host: "127.0.0.1"
+  port: 8317
+
+access:
+  api-keys:
+    - "sk-agy-local"
+
+routing:
+  strategy: "round-robin"
+  session-affinity: true
+  retry:
+    request-retry: 3
+
+oauth:
+  auth-dir: "~/.cli-proxy-api"
+  providers:
+    antigravity:
+      antigravity-credits: true
