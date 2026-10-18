@@ -6,11 +6,13 @@ CPA_BIN="${CPA_DIR}/cli-proxy-api"
 CPA_CFG="${CPA_DIR}/config.yaml"
 CPA_LOG="${CPA_DIR}/proxy.log"
 CPA_PID_FILE="${CPA_DIR}/proxy.pid"
+CPA_CATALOG="${HOME}/.codex/agy-model-catalog.json"
 CPA_HOST="${AGY_PROXY_HOST:-127.0.0.1}"
 CPA_PORT="${AGY_PROXY_PORT:-8317}"
 CPA_API_KEY="${AGY_PROXY_API_KEY:-sk-agy-local}"
 CPA_BASE_URL="http://${CPA_HOST}:${CPA_PORT}/v1"
-DEFAULT_MODEL="${AGY_MODEL:-gemini-4-argon-high}"
+DEFAULT_MODEL="${AGY_MODEL:-gemini-4-argon}"
+DEFAULT_EFFORT="${AGY_EFFORT:-}"
 
 # Resolve repository root if invoked via symlink
 SOURCE="${BASH_SOURCE[0]}"
@@ -50,8 +52,6 @@ ensure_login() {
 }
 
 sanitize_codex_auth() {
-  # If ~/.codex/auth.json contains a stale/revoked ChatGPT OAuth session without an API key,
-  # Codex TUI will force the "Sign in with ChatGPT" screen on startup.
   local auth_file="${HOME}/.codex/auth.json"
   if [[ -f "${auth_file}" ]]; then
     python3 -c '
@@ -70,6 +70,79 @@ if data.get("auth_mode") == "chatgpt" or not data.get("OPENAI_API_KEY"):
     os.chmod(p, 0o600)
 ' "${auth_file}" "${CPA_API_KEY}" || true
   fi
+}
+
+sync_codex_catalog() {
+  python3 -c '
+import copy, json, os, sys
+
+out_path = sys.argv[1]
+cc_catalog = os.path.expanduser("~/.codex/cc-switch-model-catalog.json")
+codex_cache = os.path.expanduser("~/.codex/models_cache.json")
+
+template = None
+for src in (cc_catalog, codex_cache):
+    if os.path.exists(src):
+        try:
+            data = json.load(open(src))
+            models = data.get("models", [])
+            if models:
+                template = models[0]
+                break
+        except Exception:
+            pass
+
+if template is None:
+    sys.exit(0)
+
+clean_instructions = (
+    "You are a coding agent running in the Codex CLI, a terminal-based coding assistant. "
+    "Collaborate with the user to solve their software engineering tasks accurately and efficiently."
+)
+
+models_spec = [
+    ("gemini-4-argon", "Gemini 4 Argon", "Google Gemini 4 Argon via Antigravity", 1000000, "high", ["low", "medium", "high"]),
+    ("gemini-3.8-flash", "Gemini 3.8 Flash", "Google Gemini 3.8 Flash via Antigravity", 1000000, "high", ["low", "medium", "high"]),
+    ("claude-sonnet-4-6", "Claude Sonnet 4.6", "Anthropic Claude Sonnet 4.6 (Thinking) via Antigravity", 200000, "high", ["low", "medium", "high"]),
+    ("claude-opus-4-6", "Claude Opus 4.6", "Anthropic Claude Opus 4.6 (Thinking) via Antigravity", 200000, "high", ["low", "medium", "high"]),
+    ("gpt-oss-120b", "GPT-OSS 120B", "GPT-OSS 120B via Antigravity", 128000, "medium", ["low", "medium", "high"]),
+    ("gemini-3-flash", "Gemini 3 Flash", "Google Gemini 3 Flash via Antigravity", 1000000, "medium", ["low", "medium", "high"]),
+    ("gemini-3.5-flash-lite", "Gemini 3.5 Flash Lite", "Google Gemini 3.5 Flash Lite via Antigravity", 1000000, "low", ["low", "medium", "high"]),
+]
+
+effort_descriptions = {
+    "low": "Fast responses with lighter reasoning",
+    "medium": "Balances speed and reasoning depth for everyday tasks",
+    "high": "Greater reasoning depth for complex problems",
+}
+
+out_models = []
+for idx, (slug, display_name, desc, ctx, def_effort, efforts) in enumerate(models_spec):
+    m = copy.deepcopy(template)
+    m["slug"] = slug
+    m["display_name"] = display_name
+    m["description"] = desc
+    m["base_instructions"] = clean_instructions
+    m["model_messages"] = None
+    m["apply_patch_tool_type"] = None
+    m["support_verbosity"] = False
+    m["supports_search_tool"] = False
+    m["context_window"] = ctx
+    m["max_context_window"] = ctx
+    m["default_reasoning_level"] = def_effort
+    m["supported_reasoning_levels"] = [
+        {"effort": e, "description": effort_descriptions[e]} for e in efforts
+    ]
+    m["priority"] = 1000 - idx
+    m["visibility"] = "list"
+    out_models.append(m)
+
+os.makedirs(os.path.dirname(out_path), exist_ok=True)
+tmp_path = out_path + ".tmp"
+with open(tmp_path, "w") as f:
+    json.dump({"models": out_models}, f, ensure_ascii=False, indent=2)
+os.replace(tmp_path, out_path)
+' "${CPA_CATALOG}" || true
 }
 
 start_proxy() {
@@ -137,7 +210,7 @@ try:
     if preferred in ids:
         print(preferred)
     else:
-        for cand in ["gemini-4-argon-high", "gemini-4-argon", "claude-sonnet-4-6", "claude-opus-4-6-thinking", "gemini-3.8-flash-high"]:
+        for cand in ["gemini-4-argon", "gemini-4-argon-high", "claude-sonnet-4-6", "claude-opus-4-6", "gemini-3.8-flash"]:
             if cand in ids:
                 print(cand)
                 break
@@ -159,7 +232,7 @@ show_status() {
 
   if is_proxy_running; then
     echo "🟢 转发服务: 运行中 (${CPA_BASE_URL})"
-    echo "📦 可用模型:"
+    echo "📦 可用模型 (均支持在 Codex /model 中切换 low/medium/high 推理强度):"
     list_models
   else
     echo "⚪ 转发服务: 未运行 (可运行 'agy-codex start' 或直接运行 'agy-codex')"
@@ -180,7 +253,8 @@ show_help() {
   agy-codex logs              查看转发服务日志 (${CPA_LOG})
 
 环境变量:
-  AGY_MODEL=<model_id>        指定默认模型 (默认: ${DEFAULT_MODEL}，也可直接传 codex -m <model_id>)
+  AGY_MODEL=<model_id>        指定默认模型 (默认: ${DEFAULT_MODEL}，进入后可通过 /model 切换模型与 low/medium/high)
+  AGY_EFFORT=<low|medium|high> 指定初始推理强度 (默认跟随模型预设，也可在 Codex 内用 /model 随时切换)
   AGY_PROXY_PORT=<port>       指定本地转发端口 (默认: ${CPA_PORT})
   AGY_PROXY_API_KEY=<key>     指定本地转发认证 Key (默认: ${CPA_API_KEY})
 EOF
@@ -189,6 +263,7 @@ EOF
 case "${1:-}" in
   start|proxy)
     start_proxy
+    sync_codex_catalog
     show_status
     exit 0
     ;;
@@ -199,6 +274,7 @@ case "${1:-}" in
   restart)
     stop_proxy
     start_proxy
+    sync_codex_catalog
     show_status
     exit 0
     ;;
@@ -236,11 +312,11 @@ case "${1:-}" in
     ;;
 esac
 
-# 默认行为：确保后台转发已启动，清理失效的 ChatGPT OAuth 残留，然后拉起 codex
+# 默认行为：确保后台转发已启动，同步模型目录，清理失效 ChatGPT OAuth 残留，然后拉起 codex
 start_proxy
 sanitize_codex_auth
+sync_codex_catalog
 
-# 检查用户参数中是否已显式指定 -m / --model
 HAS_MODEL_ARG=0
 for arg in "$@"; do
   if [[ "${arg}" == "-m" || "${arg}" == "--model" || "${arg}" == --model=* ]]; then
@@ -259,12 +335,20 @@ CODEX_OVERRIDES=(
   -c 'model_providers.agy.requires_openai_auth=false'
 )
 
+if [[ -f "${CPA_CATALOG}" ]]; then
+  CODEX_OVERRIDES+=(-c "model_catalog_json=\"${CPA_CATALOG}\"")
+fi
+
+if [[ -n "${DEFAULT_EFFORT}" ]]; then
+  CODEX_OVERRIDES+=(-c "model_reasoning_effort=\"${DEFAULT_EFFORT}\"")
+fi
+
 if [[ "${HAS_MODEL_ARG}" -eq 0 ]]; then
   SELECTED_MODEL=$(pick_model "${DEFAULT_MODEL}")
   CODEX_OVERRIDES+=(-c "model=\"${SELECTED_MODEL}\"")
-  echo "🎯 启动 Codex (Provider: Antigravity, Model: ${SELECTED_MODEL})"
+  echo "🎯 启动 Codex (Provider: Antigravity, Model: ${SELECTED_MODEL} — 输入 /model 可切换模型及 low/medium/high 强度)"
 else
-  echo "🎯 启动 Codex (Provider: Antigravity)"
+  echo "🎯 启动 Codex (Provider: Antigravity — 输入 /model 可切换模型及 low/medium/high 强度)"
 fi
 
 exec codex "${CODEX_OVERRIDES[@]}" "$@"

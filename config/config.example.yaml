@@ -16,6 +16,28 @@ routing:
 
 oauth:
   auth-dir: "~/.cli-proxy-api"
+  model-alias:
+    antigravity:
+      - name: "gemini-4-argon-high"
+        alias: "gemini-4-argon"
+        display-name: "Gemini 4 Argon"
+        fork: true
+        force-mapping: true
+      - name: "gemini-3.8-flash-high"
+        alias: "gemini-3.8-flash"
+        display-name: "Gemini 3.8 Flash"
+        fork: true
+        force-mapping: true
+      - name: "claude-opus-4-6-thinking"
+        alias: "claude-opus-4-6"
+        display-name: "Claude Opus 4.6"
+        fork: true
+        force-mapping: true
+      - name: "gpt-oss-120b-medium"
+        alias: "gpt-oss-120b"
+        display-name: "GPT-OSS 120B"
+        fork: true
+        force-mapping: true
   providers:
     antigravity:
       antigravity-credits: true

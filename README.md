@@ -44,12 +44,16 @@ cd agy-codex
 
 ```bash
 # 首次运行会自动拉起浏览器完成 Antigravity OAuth 登录，随后后台启动转发并进入 Codex
+# 在 Codex TUI 内随时输入 /model 即可自由切换模型及推理强度（low / medium / high）
 agy-codex
 
 # 指定 Antigravity 下的其他模型启动 Codex
 agy-codex -m claude-sonnet-4-6
-agy-codex -m claude-opus-4-6-thinking
-agy-codex -m gemini-3.8-flash-high
+agy-codex -m claude-opus-4-6
+agy-codex -m gemini-3.8-flash
+
+# 指定初始推理强度（或在 TUI 内通过 /model 动态切换）
+AGY_EFFORT=high agy-codex -m gemini-4-argon
 
 # 透传任意 Codex 原生参数（如免确认 --yolo）
 agy-codex --yolo
@@ -73,18 +77,21 @@ agy-codex --yolo
 
 ---
 
-## 配合 CC Switch 使用
+## `/model` 模型与推理强度切换 & CC Switch
 
+`agy-codex` 已将模型名与推理强度（`low` / `medium` / `high`）完全解耦，并自动生成 `~/.codex/agy-model-catalog.json` 模型目录，支持在 Codex TUI 中输入 `/model` 直接选择基础模型与 `low` / `medium` / `high` 推理档位：
+
+- `gemini-4-argon`（支持 `low` / `medium` / `high`）
+- `gemini-3.8-flash`（支持 `low` / `medium` / `high`）
+- `claude-sonnet-4-6`（支持 `low` / `medium` / `high`）
+- `claude-opus-4-6`（支持 `low` / `medium` / `high`）
+- `gpt-oss-120b`（支持 `low` / `medium` / `high`）
+- `gemini-3-flash` / `gemini-3.5-flash-lite`
+
+配合 **CC Switch** 使用：
 1. 运行 `./install.sh`（或 `agy-codex cc-switch`）注入供应商配置。
 2. 运行 `agy-codex start`（或 `./install.sh --launchd`）保持本地 `127.0.0.1:8317` 转发在线。
 3. 打开 **CC Switch -> Codex**，切换到 **`Antigravity (AGY)`** 即可全局生效。
-
-预置的模型目录包括：
-- `gemini-4-argon-high` / `gemini-4-argon-medium` / `gemini-4-argon-low`
-- `gemini-3.8-flash-high` / `gemini-3.8-flash-medium` / `gemini-3.8-flash-low`
-- `claude-sonnet-4-6`
-- `claude-opus-4-6-thinking`
-- `gpt-oss-120b-medium`
 
 ---
 
@@ -92,11 +99,13 @@ agy-codex --yolo
 
 | 变量名 | 默认值 | 说明 |
 | :--- | :--- | :--- |
-| `AGY_MODEL` | `gemini-4-argon-high` | `agy-codex` 未传 `-m` 时的默认模型 |
+| `AGY_MODEL` | `gemini-4-argon` | `agy-codex` 未传 `-m` 时的默认模型 |
+| `AGY_EFFORT` | *(留空，使用目录默认)* | 初始推理强度（`low` / `medium` / `high`），也可在 TUI 中通过 `/model` 切换 |
 | `AGY_PROXY_HOST` | `127.0.0.1` | 本地转发监听地址 |
 | `AGY_PROXY_PORT` | `8317` | 本地转发监听端口 |
 | `AGY_PROXY_API_KEY` | `sk-agy-local` | 本地转发鉴权 Key |
 | `AGY_CPA_DIR` | `~/.cli-proxy-api` | `CLIProxyAPI` 二进制、配置与 OAuth 凭证目录 |
+| `AGY_CATALOG_FILE` | `~/.codex/agy-model-catalog.json` | Codex `/model` 模型与推理档位目录文件路径 |
 
 ---
 

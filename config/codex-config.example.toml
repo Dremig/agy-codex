@@ -1,6 +1,7 @@
 # ~/.codex/config.toml example when routing Codex directly to agy-codex local proxy
 model_provider = "agy"
-model = "gemini-4-argon-high"
+model = "gemini-4-argon"
+model_reasoning_effort = "high"
 
 [model_providers.agy]
 name = "Antigravity"
